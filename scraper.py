@@ -3,8 +3,8 @@ import json
 import os
 import re
 
-# ⚠️ 주소 뒤에 의미 없는 숫자를 붙여서 '무조건 인터넷에서 새로 가져오게' 만들었습니다.
-URL = "http://marathon.pe.kr/index_calendar.html?refresh=1"
+# 환경 설정
+URL = "http://marathon.pe.kr/index_calendar.html"
 SB_URL = os.environ.get("SUPABASE_URL") + "/rest/v1/marathon_data"
 SB_KEY = os.environ.get("SUPABASE_KEY")
 
@@ -12,24 +12,27 @@ def run():
     headers = {
         "apikey": SB_KEY,
         "Authorization": f"Bearer {SB_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates"
+        "Content-Type": "application/json"
     }
     
-    # 💡 브라우저인 것처럼 속여서 진짜 마라톤 사이트에 접속합니다.
     try:
-        print(f"접속 시도 중: {URL}")
-        res = requests.get(URL, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
-        res.encoding = 'euc-kr' # 마라톤 사이트 전용 한글 설정
+        # 💡 주소에 직접 접속 (헤더를 추가해서 진짜 브라우저처럼 보이게 합니다)
+        print(f"진짜 마라톤 사이트 접속 시도: {URL}")
+        res = requests.get(URL, headers={'User-Agent': 'Mozilla/5.0'}, timeout=30)
+        
+        # 마라톤 사이트 특유의 한글 깨짐 방지 설정
+        res.encoding = 'euc-kr' 
         html = res.text
 
-        # 💡 진짜 마라톤 사이트인지 확인 (대회명이라는 글자가 있는지)
-        if "대회명" not in html:
-            print("대회 정보를 찾을 수 없습니다. 주소를 다시 확인해야 합니다.")
-            print("가져온 내용 일부:", html[:100])
-            return
+        # 💡 만약 가져온 내용에 'viewport'가 있으면 잘못된 곳에 접속한 것입니다.
+        if 'viewport' in html.lower():
+            print("경고: 여전히 내부 HTML 파일을 읽고 있습니다. 주소를 강제로 재설정합니다.")
+            # 주소를 더 명확하게 다시 시도
+            res = requests.get("http://121.78.145.121/index_calendar.html", headers={'Host': 'marathon.pe.kr', 'User-Agent': 'Mozilla/5.0'})
+            res.encoding = 'euc-kr'
+            html = res.text
 
-        # 정보 낚아채기 패턴
+        # 대회 번호와 이름 낚아채기
         pattern = r'view\.php\?no=(\d+).*?>(.*?)</a>'
         matches = re.findall(pattern, html, re.DOTALL)
         
@@ -49,10 +52,11 @@ def run():
             })
 
         if results:
+            # 기존 데이터를 싹 지우고 새로 넣으려면 아래 주석을 풀어도 되지만, 일단 추가합니다.
             requests.post(SB_URL, headers=headers, data=json.dumps(results))
             print(f"성공! {len(results)}개의 데이터를 Supabase에 보냈습니다.")
         else:
-            print("데이터 패턴을 찾지 못했습니다.")
+            print("데이터를 찾지 못했습니다. 소스코드 확인이 필요합니다.")
 
     except Exception as e:
         print(f"오류 발생: {e}")
