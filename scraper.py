@@ -21,47 +21,58 @@ def run():
     res.encoding = 'euc-kr'
     soup = BeautifulSoup(res.text, 'html.parser')
     
-    # ⚠️ 모든 tr 태그 중에서 'no=' 링크가 있는 행을 바로 찾습니다.
-    rows = soup.find_all('tr')
+    # 💡 모든 링크(a 태그)를 다 뒤져서 'view.php?no='가 들어있는 걸 찾습니다.
+    all_links = soup.find_all('a', href=True)
     
     results = []
-    for row in rows:
-        tds = row.find_all('td')
-        # 한 줄에 데이터 칸이 보통 5~6개 있습니다.
-        if len(tds) < 5: continue
-        
-        name_tag = tds[1].find('a')
-        # 링크에 'no=' 이 들어있는 행이 진짜 대회 정보입니다.
-        if name_tag and 'no=' in name_tag.get('href', ''):
+    seen_no = set() # 중복 방지
+
+    for link_tag in all_links:
+        href = link_tag['href']
+        if 'view.php?no=' in href:
             try:
-                link = name_tag['href']
-                no = link.split('no=')[1]
-                name = name_tag.get_text(strip=True)
+                # 1. 대회 번호 추출
+                no = href.split('no=')[1].split('&')[0]
+                if no in seen_no: continue
+                
+                # 2. 이 링크가 포함된 줄(tr)을 찾습니다.
+                row = link_tag.find_parent('tr')
+                if not row: continue
+                
+                tds = row.find_all('td')
+                if len(tds) < 5: continue
+                
+                # 3. 데이터 정리
+                name = link_tag.get_text(strip=True)
                 date_raw = tds[0].get_text(strip=True)
                 location = tds[2].get_text(strip=True)
                 reg = tds[3].get_text(strip=True)
                 dist = tds[4].get_text(strip=True)
                 
-                # 날짜 정리 (2026.04.03 -> 2026-4-3)
+                # 날짜 키 정리 (2026.04.03 -> 2026-4-3)
                 pure_date = date_raw.split('(')[0].strip()
-                date_parts = pure_date.split('.')
-                dk = f"{int(date_parts[0])}-{int(date_parts[1])}-{int(date_parts[2])}"
-                
+                if '.' in pure_date:
+                    parts = pure_date.split('.')
+                    dk = f"{int(parts[0])}-{int(parts[1])}-{int(parts[2])}"
+                else:
+                    dk = pure_date
+
                 results.append({
                     "no": no, "name": name, "date": date_raw,
                     "location": location, "registration": reg,
                     "distances": dist, "dateKey": dk
                 })
+                seen_no.add(no)
             except:
                 continue
 
     # Supabase에 전송
     if results:
-        # 중복 방지를 위해 데이터를 하나씩 보내지 않고 뭉쳐서 보냅니다.
         r = requests.post(SB_URL, headers=headers, data=json.dumps(results))
         print(f"성공! {len(results)}개의 데이터를 보냈습니다.")
     else:
-        print("데이터를 찾지 못했습니다. 사이트 구조를 다시 확인해야 합니다.")
+        # 마지막 수단: 페이지 전체 텍스트 출력 (디버깅용)
+        print("데이터를 여전히 찾지 못했습니다. 로직을 더 단순화해야 합니다.")
 
 if __name__ == "__main__":
     run()
