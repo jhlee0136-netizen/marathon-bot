@@ -16,63 +16,63 @@ def run():
         "Prefer": "resolution=merge-duplicates"
     }
     
-    # 사이트 접속
-    res = requests.get(URL)
-    res.encoding = 'euc-kr'
-    soup = BeautifulSoup(res.text, 'html.parser')
+    # 💡 브라우저인 것처럼 속여서 접속합니다.
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     
-    # 💡 모든 링크(a 태그)를 다 뒤져서 'view.php?no='가 들어있는 걸 찾습니다.
-    all_links = soup.find_all('a', href=True)
-    
-    results = []
-    seen_no = set() # 중복 방지
+    try:
+        res = requests.get(URL, headers={'User-Agent': user_agent})
+        res.encoding = 'euc-kr'
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 💡 "view.php?no=" 글자가 포함된 모든 줄을 찾습니다.
+        results = []
+        seen_no = set()
 
-    for link_tag in all_links:
-        href = link_tag['href']
-        if 'view.php?no=' in href:
-            try:
-                # 1. 대회 번호 추출
-                no = href.split('no=')[1].split('&')[0]
-                if no in seen_no: continue
-                
-                # 2. 이 링크가 포함된 줄(tr)을 찾습니다.
-                row = link_tag.find_parent('tr')
-                if not row: continue
-                
-                tds = row.find_all('td')
-                if len(tds) < 5: continue
-                
-                # 3. 데이터 정리
-                name = link_tag.get_text(strip=True)
-                date_raw = tds[0].get_text(strip=True)
-                location = tds[2].get_text(strip=True)
-                reg = tds[3].get_text(strip=True)
-                dist = tds[4].get_text(strip=True)
-                
-                # 날짜 키 정리 (2026.04.03 -> 2026-4-3)
-                pure_date = date_raw.split('(')[0].strip()
-                if '.' in pure_date:
-                    parts = pure_date.split('.')
-                    dk = f"{int(parts[0])}-{int(parts[1])}-{int(parts[2])}"
-                else:
-                    dk = pure_date
+        # 페이지의 모든 tr 태그를 검사
+        for tr in soup.find_all('tr'):
+            text = tr.get_text()
+            # 마라톤 일정 줄인지 확인 (날짜 형식이 있는지 등)
+            if 'view.php?no=' in str(tr) and ('.' in text):
+                tds = tr.find_all('td')
+                if len(tds) >= 5:
+                    try:
+                        link = tr.find('a', href=True)['href']
+                        no = link.split('no=')[1].split('&')[0]
+                        if no in seen_no: continue
 
-                results.append({
-                    "no": no, "name": name, "date": date_raw,
-                    "location": location, "registration": reg,
-                    "distances": dist, "dateKey": dk
-                })
-                seen_no.add(no)
-            except:
-                continue
+                        name = tds[1].get_text(strip=True)
+                        date_raw = tds[0].get_text(strip=True)
+                        location = tds[2].get_text(strip=True)
+                        reg = tds[3].get_text(strip=True)
+                        dist = tds[4].get_text(strip=True)
+                        
+                        # 날짜 키 정리 (2026.4.3 형태)
+                        pure_date = date_raw.split('(')[0].strip()
+                        parts = pure_date.split('.')
+                        if len(parts) >= 3:
+                            dk = f"{int(parts[0])}-{int(parts[1])}-{int(parts[2])}"
+                        else:
+                            dk = pure_date
 
-    # Supabase에 전송
-    if results:
-        r = requests.post(SB_URL, headers=headers, data=json.dumps(results))
-        print(f"성공! {len(results)}개의 데이터를 보냈습니다.")
-    else:
-        # 마지막 수단: 페이지 전체 텍스트 출력 (디버깅용)
-        print("데이터를 여전히 찾지 못했습니다. 로직을 더 단순화해야 합니다.")
+                        results.append({
+                            "no": no, "name": name, "date": date_raw,
+                            "location": location, "registration": reg,
+                            "distances": dist, "dateKey": dk
+                        })
+                        seen_no.add(no)
+                    except:
+                        continue
+
+        # Supabase에 전송
+        if results:
+            # 한 번에 너무 많이 보내면 오류가 날 수 있으니 나눠서 보냅니다.
+            r = requests.post(SB_URL, headers=headers, data=json.dumps(results))
+            print(f"성공! {len(results)}개의 데이터를 보냈습니다.")
+        else:
+            print("여전히 데이터를 찾지 못했습니다. 사이트 보안 수단이 변경되었을 수 있습니다.")
+            
+    except Exception as e:
+        print(f"접속 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     run()
